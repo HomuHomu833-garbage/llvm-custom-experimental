@@ -46,12 +46,6 @@ jobs:
         with:
           path: ${{github.workspace}}
 
-      - name: Setup Mold
-        uses: rui314/setup-mold@staging
-        with:
-         mold-version: 2.40.2
-         make-default: true
-
       - name: Checkout llvm-project and apply android patches
         run: |
           NDK_DIR="$ROOTDIR/android-ndk-r${{inputs.version}}"
@@ -101,8 +95,6 @@ jobs:
             echo "Applying $(basename "$PATCH")..."
             git apply "$PATCH"
           done
-
-          sudo cp /usr/local/bin/mold $ROOTDIR/android-ndk-r${{inputs.version}}/toolchains/llvm/prebuilt/linux-x86_64/bin/lld
 
           echo "All patches applied successfully."
 
