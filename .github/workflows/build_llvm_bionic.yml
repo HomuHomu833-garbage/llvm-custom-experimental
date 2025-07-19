@@ -276,16 +276,8 @@ jobs:
             -DLLVM_ENABLE_LIBXML2=OFF \
             -DLLVM_ENABLE_CURL=OFF \
             -DLLVM_ENABLE_THREADS=ON \
-            -DLLDB_ENABLE_PYTHON=OFF \
-            -DLLDB_ENABLE_LUA=OFF \
-            -DLLDB_ENABLE_CURSES=OFF \
-            -DLLDB_BUILD_FRAMEWORK=OFF \
             -DLLVM_VERSION_SUFFIX="" \
             -DCLANG_VENDOR="Android" \
-            -DANDROID_STL="c++_static" \
-            -DANDROID_ABI="$ANDROID_ABI" \
-            -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
-            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
             -DCLANG_REPOSITORY_STRING="https://github.com/${{ github.repository_owner }}/llvm-custom" \
             -DPACKAGE_BUGREPORT="https://github.com/${{ github.repository_owner }}/android-ndk-custom/issues/"
 
