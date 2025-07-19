@@ -25,6 +25,7 @@ jobs:
         target: [armv7a-linux-androideabi, aarch64-linux-android, i686-linux-android, x86_64-linux-android]
     runs-on: ubuntu-24.04
     env:
+      ANDROID_PLATFORM: 25
       ROOTDIR: ${{github.workspace}}
       TARGET_BUILD_DIR: ${{github.workspace}}/build/${{matrix.target}}
       TARGET_INSTALL_DIR: ${{github.workspace}}/output/${{matrix.target}}
@@ -102,9 +103,15 @@ jobs:
 
       - name: Build dependencies
         run : |
+          if [ "${{ matrix.target }}" = "riscv64-linux-android" ]; then
+            ANDROID_PLATFORM=35
+          else
+            ANDROID_PLATFORM=${ANDROID_PLATFORM}
+          fi
+
           TOOLCHAIN=$ROOTDIR/android-ndk-r${{inputs.version}}/toolchains/llvm/prebuilt/linux-x86_64
-          export CC=${TOOLCHAIN}/bin/${{matrix.target}}25-clang
-          export CXX=${TOOLCHAIN}/bin/${{matrix.target}}25-clang++
+          export CC=${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang
+          export CXX=${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang++
           export LD=${TOOLCHAIN}/bin/ld
           export OBJCOPY=${TOOLCHAIN}/bin/llvm-objcopy
           export AR=${TOOLCHAIN}/bin/llvm-ar
@@ -181,9 +188,33 @@ jobs:
 
       - name: Build LLVM
         run: |
+          if [ "${{ matrix.target }}" = "riscv64-linux-android" ]; then
+            ANDROID_PLATFORM=35
+          else
+            ANDROID_PLATFORM=${ANDROID_PLATFORM}
+          fi
+
           ANDROID_NDK_HOME=$ROOTDIR/android-ndk-r${{inputs.version}}
           ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
           TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+
+          case "${{ matrix.target }}" in
+            armv7a-linux-androideabi)
+              ANDROID_ABI=armeabi-v7a
+              ;;
+            aarch64-linux-android)
+              ANDROID_ABI=arm64-v8a
+              ;;
+            i686-linux-android)
+              ANDROID_ABI=x86
+              ;;
+            x86_64-linux-android)
+              ANDROID_ABI=x86_64
+              ;;
+            riscv64-linux-android)
+              ANDROID_ABI=riscv64
+              ;;
+          esac
 
           cmake -S "$ROOTDIR/llvm" -B "${TARGET_BUILD_DIR}" -G Ninja \
             -DCMAKE_INSTALL_PREFIX="${ROOTDIR}/llvm-${{matrix.target}}" \
@@ -192,10 +223,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DCMAKE_CROSSCOMPILING=True \
             -DCMAKE_SYSTEM_NAME=Android \
-            -DLLVM_DEFAULT_TARGET_TRIPLE=${{matrix.target}}25 \
-            -DCMAKE_C_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}25-clang" \
-            -DCMAKE_CXX_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}25-clang++" \
-            -DCMAKE_ASM_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}25-clang" \
+            -DLLVM_DEFAULT_TARGET_TRIPLE=${{matrix.target}}${ANDROID_PLATFORM} \
+            -DCMAKE_C_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang" \
+            -DCMAKE_CXX_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang++" \
+            -DCMAKE_ASM_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang" \
             -DCMAKE_LINKER="${TOOLCHAIN}/bin/ld" \
             -DCMAKE_OBJCOPY="${TOOLCHAIN}/bin/llvm-objcopy" \
             -DCMAKE_AR="${TOOLCHAIN}/bin/llvm-ar" \
@@ -250,8 +281,9 @@ jobs:
             -DLLVM_VERSION_SUFFIX="" \
             -DCLANG_VENDOR="Android" \
             -DANDROID_STL="c++_static" \
+            -DANDROID_ABI="$ANDROID_ABI" \
             -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
-            -DANDROID_PLATFORM=25
+            -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
             -DCLANG_REPOSITORY_STRING="https://github.com/${{ github.repository_owner }}/llvm-custom" \
             -DPACKAGE_BUGREPORT="https://github.com/${{ github.repository_owner }}/android-ndk-custom/issues/"
 
