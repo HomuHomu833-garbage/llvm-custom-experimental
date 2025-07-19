@@ -50,7 +50,7 @@ jobs:
         uses: rui314/setup-mold@staging
         with:
          mold-version: 2.40.2
-         make-default: false
+         make-default: true
 
       - name: Checkout llvm-project and apply android patches
         run: |
