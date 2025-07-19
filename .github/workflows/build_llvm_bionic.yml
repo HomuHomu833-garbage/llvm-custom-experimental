@@ -99,7 +99,7 @@ jobs:
           echo "All patches applied successfully."
 
       - name: Setup Mold
-        uses: rui314/setup-mold@v1
+        uses: rui314/setup-mold@staging
         with:
          mold-version: 2.40.2
          make-default: false
