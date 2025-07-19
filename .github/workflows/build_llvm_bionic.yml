@@ -222,7 +222,7 @@ jobs:
             -DLLVM_TARGETS_TO_BUILD="X86;AArch64;ARM;RISCV" \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DCMAKE_CROSSCOMPILING=True \
-            -DCMAKE_SYSTEM_NAME=Android \
+            -DCMAKE_SYSTEM_NAME=Linux \
             -DLLVM_DEFAULT_TARGET_TRIPLE=${{matrix.target}}${ANDROID_PLATFORM} \
             -DCMAKE_C_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang" \
             -DCMAKE_CXX_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang++" \
