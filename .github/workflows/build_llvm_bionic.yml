@@ -285,8 +285,13 @@ jobs:
 
           cmake --build "${TARGET_BUILD_DIR}" --target install
 
-      - name: Check
+      - name: Strip and Check
         run: |
+          find llvm-${{matrix.target}}/bin -type f ! -lname '*' | while IFS= read -r file; do
+            if file "$file" | grep -q ELF; then
+              "$ROOTDIR/android-ndk-r${{inputs.version}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" -s "$file"
+            fi
+          done
           file llvm-${{matrix.target}}/bin/*
           tree llvm-${{matrix.target}}
 
