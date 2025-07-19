@@ -97,8 +97,10 @@ jobs:
 
           rm -rf "$ROOTDIR/../llvm_android"
 
-          echo "Applying BOLT-32-bits-fix.patch..."
-          git apply "$ROOTDIR/patches/musl/llvm/$LLVM_VERSION/BOLT-32-bits-fix.patch"
+          for PATCH in $ROOTDIR/patches/musl/llvm/$LLVM_VERSION/*.patch; do
+            echo "Applying $(basename "$PATCH")..."
+            git apply "$PATCH"
+          done
 
           sudo cp /usr/local/bin/mold $ROOTDIR/android-ndk-r${{inputs.version}}/toolchains/llvm/prebuilt/linux-x86_64/bin/lld
 
