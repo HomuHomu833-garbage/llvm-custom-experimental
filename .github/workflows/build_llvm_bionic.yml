@@ -147,7 +147,7 @@ jobs:
               (
                   cd "${TARGET_BUILD_DIR}/zstd"
 
-                  $CC $CFLAGS -c \
+                  $CC -c \
                       "${ROOTDIR}/zstd/lib/decompress/zstd_ddict.c" \
                       "${ROOTDIR}/zstd/lib/decompress/zstd_decompress.c" \
                       "${ROOTDIR}/zstd/lib/decompress/huf_decompress.c" \
@@ -282,8 +282,8 @@ jobs:
             -DCLANG_VENDOR="Android" \
             -DANDROID_STL="c++_static" \
             -DANDROID_ABI="$ANDROID_ABI" \
-            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
             -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
+            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
             -DCLANG_REPOSITORY_STRING="https://github.com/${{ github.repository_owner }}/llvm-custom" \
             -DPACKAGE_BUGREPORT="https://github.com/${{ github.repository_owner }}/android-ndk-custom/issues/"
 
