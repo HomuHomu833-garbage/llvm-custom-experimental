@@ -99,7 +99,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: "0.15.0-dev.300+9e21ba12d"
+          version: "0.15.0-dev.137+db7db4802"
           use-cache: false
         
       - name: Setup Zig toolchain
