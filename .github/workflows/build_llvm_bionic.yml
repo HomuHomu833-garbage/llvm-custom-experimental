@@ -235,6 +235,7 @@ jobs:
             -DLLVM_ENABLE_PROJECTS="${{inputs.projects}}" \
             -DLLVM_ENABLE_ZLIB=FORCE_ON \
             -DLLVM_ENABLE_ZSTD=FORCE_ON \
+            -Dzstd_LIBRARY="${TARGET_INSTALL_DIR}/lib/libzstd.a" \
             -DLLVM_USE_STATIC_ZSTD=ON \
             -DLLVM_BUILD_STATIC=ON \
             -DCLANG_ENABLE_ARCMT=OFF \
