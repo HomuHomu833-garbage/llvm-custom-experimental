@@ -46,6 +46,12 @@ jobs:
         with:
           path: ${{github.workspace}}
 
+      - name: Setup Mold
+        uses: rui314/setup-mold@staging
+        with:
+         mold-version: 2.40.2
+         make-default: false
+
       - name: Checkout llvm-project and apply android patches
         run: |
           NDK_DIR="$ROOTDIR/android-ndk-r${{inputs.version}}"
@@ -91,18 +97,12 @@ jobs:
 
           rm -rf "$ROOTDIR/../llvm_android"
 
-          for PATCH in $ROOTDIR/patches/musl/llvm/$LLVM_VERSION/*.patch; do
-            echo "Applying $(basename "$PATCH")..."
-            git apply "$PATCH"
-          done
+          echo "Applying BOLT-32-bits-fix.patch..."
+          git apply "$ROOTDIR/patches/musl/llvm/$LLVM_VERSION/BOLT-32-bits-fix.patch"
+
+          sudo cp /usr/local/bin/mold $ROOTDIR/android-ndk-r${{inputs.version}}/toolchains/llvm/prebuilt/linux-x86_64/bin/lld
 
           echo "All patches applied successfully."
-
-      - name: Setup Mold
-        uses: rui314/setup-mold@staging
-        with:
-         mold-version: 2.40.2
-         make-default: false
 
       - name: Install dependencies
         run: sudo apt install -y ninja-build
@@ -233,8 +233,7 @@ jobs:
             -DCMAKE_C_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang" \
             -DCMAKE_CXX_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang++" \
             -DCMAKE_ASM_COMPILER="${TOOLCHAIN}/bin/${{matrix.target}}${ANDROID_PLATFORM}-clang" \
-            -DCMAKE_LINKER="/usr/local/bin/mold" \
-            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=/usr/local/bin/mold" \
+            -DCMAKE_LINKER="${TOOLCHAIN}/bin/ld" \
             -DCMAKE_OBJCOPY="${TOOLCHAIN}/bin/llvm-objcopy" \
             -DCMAKE_AR="${TOOLCHAIN}/bin/llvm-ar" \
             -DCMAKE_RANLIB="${TOOLCHAIN}/bin/llvm-ranlib" \
