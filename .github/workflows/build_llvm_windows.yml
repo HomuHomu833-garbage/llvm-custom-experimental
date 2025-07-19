@@ -1,4 +1,4 @@
-name: Build LLVM (windows)
+name: Build LLVM (Windows)
 run-name: Build LLVM for r${{inputs.version}} ${{inputs.projects}}
 on:
   workflow_dispatch:
