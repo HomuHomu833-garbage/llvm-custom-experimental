@@ -91,6 +91,9 @@ jobs:
 
           rm -rf "$ROOTDIR/../llvm_android"
 
+          echo "Applying BOLT-32-bits-fix.patch..."
+          git apply "$ROOTDIR/patches/musl/llvm/$LLVM_VERSION/BOLT-32-bits-fix.patch"
+
           echo "All patches applied successfully."
 
       - name: Setup Zig
