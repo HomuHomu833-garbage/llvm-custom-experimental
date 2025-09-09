@@ -23,28 +23,20 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-macos-none, x86_64-macos-none]
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     env:
       ROOTDIR: ${{github.workspace}}
       TARGET_BUILD_DIR: ${{github.workspace}}/build/${{matrix.target}}
       TARGET_INSTALL_DIR: ${{github.workspace}}/output/${{matrix.target}}
       ZIG_TARGET: ${{matrix.target}}
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 5120
-          swap-size-mb: 5120
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
-
       - name: Checkout llvm-custom
         uses: actions/checkout@v4
         with:
           path: ${{github.workspace}}
+
+      - name: Install GNU sed
+        run: brew install gnu-sed
 
       - name: Checkout llvm-project and apply android patches
         run: |
@@ -57,9 +49,9 @@ jobs:
           curl -sSfL -o android-ndk.zip "https://dl.google.com/android/repository/android-ndk-r${{inputs.version}}-linux.zip"
           unzip -qq android-ndk.zip -d $ROOTDIR
 
-          LLVM_VERSION=$($CLANG_VERSION_CMD | sed -n 's/.*clang version \([0-9][0-9.]*[a-zA-Z0-9]*\).*/\1/p')
-          LLVM_REV=$($CLANG_VERSION_CMD | sed -E 's/.*llvm-project ([a-f0-9]{40}).*/\1/' | head -n 1)
-          ANDROID_REV=$(grep 'llvm_android/+/.*' "$CLANG_SOURCE_INFO" | sed -n 's/.*llvm_android\/\+//; s/\/patches.*//p' | sed 's/\/\+//g; s/^\+//g' | head -n 1)
+          LLVM_VERSION=$($CLANG_VERSION_CMD | gsed -n 's/.*clang version \([0-9][0-9.]*[a-zA-Z0-9]*\).*/\1/p')
+          LLVM_REV=$($CLANG_VERSION_CMD | gsed -E 's/.*llvm-project ([a-f0-9]{40}).*/\1/' | head -n 1)
+          ANDROID_REV=$(grep 'llvm_android/+/.*' "$CLANG_SOURCE_INFO" | gsed -n 's/.*llvm_android\/\+//; s/\/patches.*//p' | gsed 's/\/\+//g; s/^\+//g' | head -n 1)
           
           if [[ -z "$LLVM_VERSION" || -z "$LLVM_REV" || -z "$ANDROID_REV" ]]; then
             echo "Error: Failed to extract necessary version/revision info."
@@ -78,7 +70,7 @@ jobs:
           cd $ROOTDIR
 
           echo "Applying patches from llvm_android..."
-          mapfile -t PATCHES < <(grep -oP 'patches/\S+' "$CLANG_SOURCE_INFO" | sed 's/)$//')
+          mapfile -t PATCHES < <(grep -oP 'patches/\S+' "$CLANG_SOURCE_INFO" | gsed 's/)$//')
 
           for PATCH in ${PATCHES[@]}; do
               echo "Applying $(basename "$PATCH")..."
@@ -97,6 +89,11 @@ jobs:
           done
 
           echo "All patches applied successfully."
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@master
+        with:
+          xcode-version: '16.4'
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
