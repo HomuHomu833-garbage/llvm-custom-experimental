@@ -46,8 +46,10 @@ jobs:
         with:
           xcode-version: '16.4'
 
-      - name: Install GNU sed
-        run: brew install gnu-sed
+      - name: Install GNU Packages
+        run: |
+          brew install gnu-sed bash grep
+          sudo mv /usr/local/bin/bash /bin/bash
 
       - name: Checkout llvm-project and apply android patches
         run: |
