@@ -47,9 +47,7 @@ jobs:
           xcode-version: '16.4'
 
       - name: Install GNU Packages
-        run: |
-          brew install gnu-sed bash grep
-          sudo mv /opt/homebrew/bin/bash /bin/bash
+        run: brew install gnu-sed grep
 
       - name: Checkout llvm-project and apply android patches
         run: |
@@ -59,7 +57,7 @@ jobs:
           CLANG_SOURCE_INFO="$NDK_DIR/toolchains/llvm/prebuilt/darwin-x86_64/clang_source_info.md"
           LLVM_VERSION=$($CLANG_VERSION_CMD | gsed -n 's/.*clang version \([0-9][0-9.]*[a-zA-Z0-9]*\).*/\1/p')
           LLVM_REV=$($CLANG_VERSION_CMD | gsed -E 's/.*llvm-project ([a-f0-9]{40}).*/\1/' | head -n 1)
-          ANDROID_REV=$(grep 'llvm_android/+/.*' "$CLANG_SOURCE_INFO" | gsed -n 's/.*llvm_android\/\+//; s/\/patches.*//p' | gsed 's/\/\+//g; s/^\+//g' | head -n 1)
+          ANDROID_REV=$(ggrep 'llvm_android/+/.*' "$CLANG_SOURCE_INFO" | gsed -n 's/.*llvm_android\/\+//; s/\/patches.*//p' | gsed 's/\/\+//g; s/^\+//g' | head -n 1)
           
           if [[ -z "$LLVM_VERSION" || -z "$LLVM_REV" || -z "$ANDROID_REV" ]]; then
             echo "Error: Failed to extract necessary version/revision info."
@@ -78,7 +76,10 @@ jobs:
           cd $ROOTDIR
 
           echo "Applying patches from llvm_android..."
-          mapfile -t PATCHES < <(grep -oP 'patches/\S+' "$CLANG_SOURCE_INFO" | gsed 's/)$//')
+          PATCHES=()
+          while IFS= read -r line; do
+            PATCHES+=("$line")
+          done < <(ggrep -oP 'patches/\S+' "$CLANG_SOURCE_INFO" | gsed 's/)$//')
 
           for PATCH in ${PATCHES[@]}; do
               echo "Applying $(basename "$PATCH")..."
