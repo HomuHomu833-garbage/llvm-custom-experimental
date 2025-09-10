@@ -35,20 +35,26 @@ jobs:
         with:
           path: ${{github.workspace}}
 
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1.5.0
+        with:
+          ndk-version: r${{inputs.version}}
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@master
+        with:
+          xcode-version: '16.4'
+
       - name: Install GNU sed
         run: brew install gnu-sed
 
       - name: Checkout llvm-project and apply android patches
         run: |
-          NDK_DIR="$ROOTDIR/android-ndk-r${{inputs.version}}"
+          NDK_DIR="$${{ steps.setup-ndk.outputs.ndk-path }}"
           LLVM_BIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
           CLANG_VERSION_CMD="$LLVM_BIN/clang --version"
           CLANG_SOURCE_INFO="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/clang_source_info.md"
-
-          echo "Downloading NDK r${{inputs.version}}..."
-          curl -sSfL -o android-ndk.zip "https://dl.google.com/android/repository/android-ndk-r${{inputs.version}}-linux.zip"
-          unzip -qq android-ndk.zip -d $ROOTDIR
-
           LLVM_VERSION=$($CLANG_VERSION_CMD | gsed -n 's/.*clang version \([0-9][0-9.]*[a-zA-Z0-9]*\).*/\1/p')
           LLVM_REV=$($CLANG_VERSION_CMD | gsed -E 's/.*llvm-project ([a-f0-9]{40}).*/\1/' | head -n 1)
           ANDROID_REV=$(grep 'llvm_android/+/.*' "$CLANG_SOURCE_INFO" | gsed -n 's/.*llvm_android\/\+//; s/\/patches.*//p' | gsed 's/\/\+//g; s/^\+//g' | head -n 1)
@@ -89,11 +95,6 @@ jobs:
           done
 
           echo "All patches applied successfully."
-
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@master
-        with:
-          xcode-version: '16.4'
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
