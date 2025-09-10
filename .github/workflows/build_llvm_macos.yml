@@ -52,6 +52,9 @@ jobs:
       - name: Checkout llvm-project and apply android patches
         run: |
           NDK_DIR="$${{ steps.setup-ndk.outputs.ndk-path }}"
+          cd $NDK_DIR
+          find . -name ".*"
+          exit 1
           LLVM_BIN="$NDK_DIR/toolchains/llvm/prebuilt/darwin-x86_64/bin"
           CLANG_VERSION_CMD="$LLVM_BIN/clang --version"
           CLANG_SOURCE_INFO="$NDK_DIR/toolchains/llvm/prebuilt/darwin-x86_64/clang_source_info.md"
