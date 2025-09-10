@@ -46,8 +46,8 @@ jobs:
         with:
           xcode-version: '16.4'
 
-      - name: Install GNU Packages
-        run: brew install gnu-sed grep
+      - name: Install dependencies
+        run: brew install gnu-sed grep ninja
 
       - name: Checkout llvm-project and apply android patches
         run: |
@@ -107,9 +107,6 @@ jobs:
         
       - name: Setup Zig toolchain
         run: git clone https://github.com/${{ github.repository_owner }}/zig-as-llvm
-
-      - name: Install dependencies
-        run: sudo apt install -y ninja-build
 
       - name: Build dependencies
         run : |
