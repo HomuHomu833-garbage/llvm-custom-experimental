@@ -49,7 +49,7 @@ jobs:
       - name: Install GNU Packages
         run: |
           brew install gnu-sed bash grep
-          sudo mv /usr/local/bin/bash /bin/bash
+          sudo mv /opt/homebrew/bin/bash /bin/bash
 
       - name: Checkout llvm-project and apply android patches
         run: |
