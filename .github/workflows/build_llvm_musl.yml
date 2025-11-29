@@ -109,6 +109,26 @@ jobs:
             git apply "$PATCH"
           done
 
+          sed -i '/void X86_64::relaxTlsIeToLe/,/write32le/{
+            /} else {$/,/^  \}/ c\
+            } else if (memcmp(inst, "\\x8b\\x25", 2) == 0) {\
+              // "movl foo@gottpoff(%rip),%reg" -> "movl $foo,%reg"\
+              memcpy(inst, "\\xc7", 1);\
+              *regSlot = 0xc0 | (loc[-1] & 0x7);\
+            } else if (memcmp(inst, "\\x03\\x25", 2) == 0) {\
+              // "addl foo@gottpoff(%rip),%reg" -> "addl $foo,%reg"\
+              memcpy(inst, "\\x81", 1);\
+              *regSlot = 0xc0 | (loc[-1] & 0x7);\
+            } else if (memcmp(inst, "\\x8d\\x25", 2) == 0) {\
+              // "leal foo@gottpoff(%rip),%reg" -> "leal foo(%reg),%reg"\
+              memcpy(inst, "\\x8d", 1);\
+              *regSlot = 0x80 | ((loc[-1] & 0x7) << 3) | (loc[-1] & 0x7);\
+            } else {\
+              error(getErrorLocation(loc - 3) +\
+                    "R_X86_64_GOTTPOFF must be used in MOVQ, ADDQ, MOVL, ADDL, or LEA instructions only");\
+            }
+          }' lld/ELF/Arch/X86_64.cpp
+
           echo "All patches applied successfully."
 
       - name: Setup Zig
@@ -207,26 +227,6 @@ jobs:
       - name: Build LLVM
         run: |
           TOOLCHAIN=${PWD}/zig-as-llvm
-
-          sed -i '/void X86_64::relaxTlsIeToLe/,/write32le/{
-            /} else {$/,/^  \}/ c\
-            } else if (memcmp(inst, "\\x8b\\x25", 2) == 0) {\
-              // "movl foo@gottpoff(%rip),%reg" -> "movl $foo,%reg"\
-              memcpy(inst, "\\xc7", 1);\
-              *regSlot = 0xc0 | (loc[-1] & 0x7);\
-            } else if (memcmp(inst, "\\x03\\x25", 2) == 0) {\
-              // "addl foo@gottpoff(%rip),%reg" -> "addl $foo,%reg"\
-              memcpy(inst, "\\x81", 1);\
-              *regSlot = 0xc0 | (loc[-1] & 0x7);\
-            } else if (memcmp(inst, "\\x8d\\x25", 2) == 0) {\
-              // "leal foo@gottpoff(%rip),%reg" -> "leal foo(%reg),%reg"\
-              memcpy(inst, "\\x8d", 1);\
-              *regSlot = 0x80 | ((loc[-1] & 0x7) << 3) | (loc[-1] & 0x7);\
-            } else {\
-              error(getErrorLocation(loc - 3) +\
-                    "R_X86_64_GOTTPOFF must be used in MOVQ, ADDQ, MOVL, ADDL, or LEA instructions only");\
-            }
-          }' $ROOTDIR/llvm/lld/ELF/Arch/X86_64.cpp
 
           cmake -S "$ROOTDIR/llvm" -B "${TARGET_BUILD_DIR}" -G Ninja \
             -DCMAKE_INSTALL_PREFIX="${ROOTDIR}/llvm-${{matrix.target}}" \
