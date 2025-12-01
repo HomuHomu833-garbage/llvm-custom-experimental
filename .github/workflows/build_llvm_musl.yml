@@ -128,6 +128,7 @@ jobs:
                     "R_X86_64_GOTTPOFF must be used in MOVQ, ADDQ, MOVL, ADDL, or LEA instructions only");\
             }
           }' lld/ELF/Arch/X86_64.cpp
+          sed -z -i 's/getErrorLocation([^)]*)[[:space:]]*+[[:space:]]*//g' lld/ELF/Arch/X86_64.cpp
 
           echo "All patches applied successfully."
 
