@@ -506,11 +506,20 @@ fi
 # the string can't claim work a target dropped. clang adds the trailing space,
 # see clang/lib/Basic/CMakeLists.txt.
 _mark() { if [ "$1" = 1 ]; then printf '+%s' "$2"; else printf -- '-%s' "$2"; fi; }
-_on_pgo=0; if [ -n "${LLVM_PROFDATA_FILE:-}" ]; then _on_pgo=1; fi
-_on_lto=0; if [ "$LLVM_LTO" != OFF ]; then _on_lto=1; fi
-_on_mlgo=0; if [ ${#MLGO_ARGS[@]} -gt 0 ]; then _on_mlgo=1; fi
-VENDOR_OPTS="$(_mark "$_on_pgo" pgo), $(_mark 0 bolt), $(_mark "$_on_lto" lto), $(_mark "$_on_mlgo" mlgo)"
-CLANG_VENDOR="${CLANG_VENDOR:-Android (${LLVM_BUILD_ID:+$LLVM_BUILD_ID, }$VENDOR_OPTS, based on ${CLANG_RELEASE:-unknown})}"
+# Composed, not assigned, so a later probe that drops something can rebuild it.
+# An env-supplied CLANG_VENDOR stays whatever the caller said.
+VENDOR_FIXED="${CLANG_VENDOR:-}"
+compose_vendor() {
+  [ -z "$VENDOR_FIXED" ] || { CLANG_VENDOR="$VENDOR_FIXED"; return 0; }
+  local p=0 l=0 m=0
+  [ -n "${LLVM_PROFDATA_FILE:-}" ] && p=1
+  [ "$LLVM_LTO" != OFF ] && l=1
+  [ ${#MLGO_ARGS[@]} -gt 0 ] && m=1
+  VENDOR_OPTS="$(_mark "$p" pgo), $(_mark 0 bolt), $(_mark "$l" lto), $(_mark "$m" mlgo)"
+  CLANG_VENDOR="Android (${LLVM_BUILD_ID:+$LLVM_BUILD_ID, }$VENDOR_OPTS, based on ${CLANG_RELEASE:-unknown})"
+  return 0
+}
+compose_vendor
 log "Vendor: $CLANG_VENDOR"
 
 # --- zlib + zstd (static, bundled) -----------------------------------------
@@ -733,45 +742,38 @@ log "Distribution: ${#DIST[@]} components"
 log "Configuring LLVM for $TARGET ($PLATFORM)"
 cmake -S "$SRC/llvm" -B "$BUILD_DIR" -G Ninja "${args[@]}"
 
-# Hexagon is the one backend that never implements getFixupKind(StringRef), so
-# every named .reloc that reaches its assembler dies as "unknown relocation
-# name" with no location and no name. Compile one real TU to assembly and say
-# which directive it is, instead of reading that same line twenty times.
-if [ "${TARGET%%-*}" = hexagon ]; then
-  _hf="-std=c++17 -Os -DNDEBUG -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti"
-  [ -n "${LLVM_PROFDATA_FILE:-}" ] && _hf="$_hf -fprofile-instr-use=$LLVM_PROFDATA_FILE"
-  "$CROSS_CXX" --version 2>&1 | head -n 1 >&2 || true
-  # shellcheck disable=SC2086
-  "$CROSS_CXX" $CROSS_CXXFLAGS $_hf -S -o "$BUILD_DIR/hex-probe.s" \
-    -I"$SRC/llvm/include" -I"$BUILD_DIR/include" \
-    "$SRC/llvm/lib/Support/APFixedPoint.cpp" 2>"$BUILD_DIR/hex-probe.err" || true
-  if [ -s "$BUILD_DIR/hex-probe.s" ]; then
-    log "hexagon: .reloc and @ specifiers the compiler emitted:"
-    grep -n '\.reloc\|@GOT\|@PLT\|@GDPLT\|@GPREL\|@DTPREL\|@TPREL\|@IE\|@LD' \
-      "$BUILD_DIR/hex-probe.s" | head -n 10 || log "hexagon: none in the assembly"
-    # The assembly is clean, so the directive comes out of MC on the way to an
-    # object. Bisect the flags that separate this from a plain compile: one TU
-    # each, seconds apiece, and the log names which one carries it.
-    _base="-std=c++17 -Os -DNDEBUG -fno-exceptions -fno-rtti"
-    _pgo=""; [ -n "${LLVM_PROFDATA_FILE:-}" ] && _pgo="-fprofile-instr-use=$LLVM_PROFDATA_FILE"
-    for _try in "plain:" "sections:-ffunction-sections -fdata-sections" \
-                "pgo:$_pgo" "noaddrsig:-fno-addrsig $_pgo" "full:$_hf"; do
-      _lbl="${_try%%:*}"; _add="${_try#*:}"
-      [ "$_lbl" = pgo ] && [ -z "$_pgo" ] && continue
-      # shellcheck disable=SC2086
-      if "$CROSS_CXX" $CROSS_CXXFLAGS $_base $_add -c -o "$BUILD_DIR/hex-$_lbl.o" \
-           -I"$SRC/llvm/include" -I"$BUILD_DIR/include" \
-           "$SRC/llvm/lib/Support/APFixedPoint.cpp" 2>"$BUILD_DIR/hex-$_lbl.err"; then
-        log "hexagon: $_lbl ok"
-      else
-        log "hexagon: $_lbl FAILS -> $(head -n 1 "$BUILD_DIR/hex-$_lbl.err")"
-      fi
-      rm -f "$BUILD_DIR/hex-$_lbl.o"
+# A profile can also break codegen rather than just fail to load, and only a
+# real translation unit the profile covers will show it: the trivial probe
+# earlier compiles to nothing the profile has anything to say about. Those need
+# the headers cmake has just written, which is why this runs here. Compile one
+# both ways, and if the profile is what breaks it, drop it and configure again.
+if [ -n "${LLVM_PROFDATA_FILE:-}" ]; then
+  # Take the command ninja is going to run rather than compose one: the flags
+  # that matter are the build's, and guessing at them is how you end up testing
+  # something the build never does. Any Support object will do; it carries the
+  # profile already, so dropping that one flag gives the other half.
+  _obj="$(ninja -C "$BUILD_DIR" -t targets all 2>/dev/null |
+          sed -n 's@^\(lib/Support/CMakeFiles/LLVMSupport\.dir/[^:]*\.cpp\.o\):.*@\1@p' | head -n1)"
+  _cmd=""
+  [ -n "$_obj" ] && _cmd="$(ninja -C "$BUILD_DIR" -t commands "$_obj" 2>/dev/null | tail -n1)"
+  _plain="$(printf '%s' "$_cmd" | sed 's@ -fprofile-instr-use=[^ ]*@@g')"
+  if [ -n "$_cmd" ] && [ "$_plain" != "$_cmd" ] &&
+     ( cd "$BUILD_DIR" && eval "$_plain" ) >/dev/null 2>&1 &&
+     ! ( cd "$BUILD_DIR" && eval "$_cmd" ) >/dev/null 2>&1; then
+    log "PGO: the profile breaks codegen for $TARGET, reconfiguring without it"
+    LLVM_PROFDATA_FILE=""
+    compose_vendor
+    log "Vendor: $CLANG_VENDOR"
+    _keep=()
+    for _x in "${args[@]}"; do
+      case "$_x" in -DLLVM_PROFDATA_FILE=*|-DCLANG_VENDOR=*) ;; *) _keep+=("$_x") ;; esac
     done
-  else
-    log "hexagon: probe produced no assembly:"
-    head -n 10 "$BUILD_DIR/hex-probe.err" >&2 || true
+    args=("${_keep[@]}" -DCLANG_VENDOR="$CLANG_VENDOR")
+    cmake -S "$SRC/llvm" -B "$BUILD_DIR" -G Ninja "${args[@]}"
   fi
+  # Whatever the probe left behind carries the wrong flags for the build that
+  # follows; ninja reruns it either way, since it records the command line.
+  [ -n "$_obj" ] && rm -f "$BUILD_DIR/$_obj"
 fi
 
 log "Building + installing"
