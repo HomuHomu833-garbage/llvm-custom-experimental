@@ -87,12 +87,12 @@ jobs:
         uses: docker/login-action@v4.2.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: HomuHomu833
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build LLVM
         run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/llvm-builder:latest"
+          IMAGE="ghcr.io/$(echo 'HomuHomu833' | tr '[:upper:]' '[:lower:]')/llvm-builder:latest"
           docker run --rm \
             -v "/mnt/build:/work" -w /work --user "$(id -u):$(id -g)" \
             -e HOME=/work \
