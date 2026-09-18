@@ -107,7 +107,7 @@ jobs:
             -e ENABLE_PGO='${{ inputs.pgo && 1 || 0 }}' \
             -e ENABLE_MLGO='${{ inputs.mlgo && 1 || 0 }}' \
             -e LLVM_LTO='${{ inputs.lto && 'Thin' || 'OFF' }}' \
-            -e PGO_URL_BASE='https://github.com/${{ github.repository }}/releases/download/profdata' \
+            -e PGO_URL_BASE='https://github.com/HomuHomu833/llvm-custom/releases/download/profdata' \
             -e CLANG_REPOSITORY_STRING='https://github.com/${{ github.repository }} ${{ github.sha }}' \
             -e PACKAGE_BUGREPORT='https://github.com/${{ github.repository_owner }}/android-ndk-custom/issues/' \
             "$IMAGE" \
