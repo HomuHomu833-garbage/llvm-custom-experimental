@@ -929,6 +929,12 @@ log "Distribution: ${#DIST[@]} components"
 
 log "Building + installing"
 cmake --build "$BUILD_DIR" --target install-distribution
+_all_targets="$(ninja -C "$BUILD_DIR" -t targets all 2>/dev/null | cut -d: -f1)"
+_have=()
+for _b in "${LOOSE[@]}"; do
+  grep -qx "$_b" <<<"$_all_targets" && _have+=("$_b") || log "  $_b is not built for this target, skipped"
+done
+LOOSE=("${_have[@]}")
 if [ ${#LOOSE[@]} -gt 0 ]; then
   cmake --build "$BUILD_DIR" --target "${LOOSE[@]}"
   for _b in "${LOOSE[@]}"; do

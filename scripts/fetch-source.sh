@@ -396,6 +396,27 @@ if [ -f "$_perf_helper" ] &&
   log "profdata: forcing one llvm-profdata merge thread"
 fi
 
+# arm64ec defines __x86_64__ but cannot assemble x86 inline asm. Newer trees
+# carry host-arm64ec-not-x86.patch; older ones get the same guard here.
+_host="$SRC/llvm/lib/Support/Host.cpp"
+if [ -f "$_host" ] && ! grep -q __arm64ec__ "$_host"; then
+  sed -i -e 's/defined(__x86_64__)/(defined(__x86_64__) \&\& !defined(__arm64ec__))/g' \
+         -e 's/defined(_M_X64)/(defined(_M_X64) \&\& !defined(__arm64ec__))/g' "$_host"
+  log "Host.cpp: x86 paths off for arm64ec"
+fi
+
+# Hexagon: clangd's thread_local root Context pulls __cxa_thread_atexit_impl out
+# of R_HEX_B22_PCREL reach. Same change as clangd-context-no-tls-dtor.patch.
+for _ctx in "$SRC/clang-tools-extra/clangd/support/Context.cpp" "$SRC/clang-tools-extra/clangd/Context.cpp"; do
+  if [ -f "$_ctx" ] && grep -q '^  static thread_local auto C = Context::empty();$' "$_ctx"; then
+    sed -i '/^  static thread_local auto C = Context::empty();$/{
+N
+s/.*\n  return C;/  static thread_local Context *C = nullptr;\n  if (!C)\n    C = new Context(Context::empty());\n  return *C;/
+}' "$_ctx"
+    log "clangd: root Context without a thread-local destructor"
+  fi
+done
+
 # On older trees a distribution build exports only listed components, so
 # polly's install(EXPORT LLVMExports) names LLVM libraries outside the export
 # set and generate fails. We don't ship libPolly; drop it from the export.
