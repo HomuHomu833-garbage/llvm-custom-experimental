@@ -614,6 +614,13 @@ if [ "$LLVM_LTO" != OFF ]; then
       log "LTO: linker will not take -regalloc-enable-advisor=release, leaving it off"
     fi
   fi
+  # Clang 8 (NDK r20) forwards -Os to lld as -plugin-opt=Os, which lld rejects.
+  # A later -O2 on the link line wins and only sets LTO codegen.
+  if [ "$LLVM_LTO" != OFF ] && ! _probe lto-a.cc -flto=thin -Os &&
+     _probe lto-a.cc -flto=thin -Os -O2; then
+    log "LTO: linker rejects -plugin-opt=Os, linking with -O2"
+    CROSS_LDFLAGS="$CROSS_LDFLAGS -O2"
+  fi
   # Unprofiled, they don't rate link-time codegen worth its cost, and only on
   # linux. Probed too: linux is zig's, same allowlist.
   if [ "$LLVM_LTO" != OFF ] && [ -z "${LLVM_PROFDATA_FILE:-}" ] && [ "$PLATFORM" = linux ]; then
