@@ -790,6 +790,15 @@ args=(
   -DCLANG_REPOSITORY_STRING="${CLANG_REPOSITORY_STRING:-llvm-custom}"
   -DPACKAGE_BUGREPORT="${PACKAGE_BUGREPORT:-}"
 )
+# FORCE_ON only exists from LLVM 12. Older trees read it as a false string, so
+# they built without zlib and lld rejected compressed debug sections (as in
+# r20-r24's libgcc_real.a). Ask for ON there; the check after configure makes
+# a missing zlib fatal instead of silent.
+if ! grep -qs 'LLVM_ENABLE_ZLIB STREQUAL FORCE_ON' "$SRC/llvm/cmake/config-ix.cmake"; then
+  for _i in "${!args[@]}"; do
+    [ "${args[$_i]}" = -DLLVM_ENABLE_ZLIB=FORCE_ON ] && args[_i]=-DLLVM_ENABLE_ZLIB=ON
+  done
+fi
 # Pin zlib + zstd to our bundled static builds so find_package() doesn't grab an
 # incompatible host .so (which lld drops, leaving zlib/zstd symbols undefined).
 args+=(
@@ -926,6 +935,8 @@ while :; do
   DIST=("${DIST[@]}")
 done
 log "Distribution: ${#DIST[@]} components"
+grep -qsE '^#define LLVM_ENABLE_ZLIB 1' "$BUILD_DIR"/include/llvm/Config/*.h || {
+  echo "LLVM configured without zlib" >&2; exit 1; }
 
 log "Building + installing"
 cmake --build "$BUILD_DIR" --target install-distribution
