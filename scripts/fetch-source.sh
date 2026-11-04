@@ -396,6 +396,50 @@ if [ -f "$_perf_helper" ] &&
   log "profdata: forcing one llvm-profdata merge thread"
 fi
 
+# arm64ec defines __x86_64__ but cannot assemble x86 inline asm. Newer trees
+# carry host-arm64ec-not-x86.patch; older ones get the same guard here.
+_host="$SRC/llvm/lib/Support/Host.cpp"
+if [ -f "$_host" ] && ! grep -q __arm64ec__ "$_host"; then
+  sed -i -e 's/defined(__x86_64__)/(defined(__x86_64__) \&\& !defined(__arm64ec__))/g' \
+         -e 's/defined(_M_X64)/(defined(_M_X64) \&\& !defined(__arm64ec__))/g' "$_host"
+  log "Host.cpp: x86 paths off for arm64ec"
+fi
+
+# Hexagon: clangd's thread_local root Context pulls __cxa_thread_atexit_impl out
+# of R_HEX_B22_PCREL reach. Same change as clangd-context-no-tls-dtor.patch.
+for _ctx in "$SRC/clang-tools-extra/clangd/support/Context.cpp" "$SRC/clang-tools-extra/clangd/Context.cpp"; do
+  if [ -f "$_ctx" ] && grep -q '^  static thread_local auto C = Context::empty();$' "$_ctx"; then
+    sed -i '/^  static thread_local auto C = Context::empty();$/{
+N
+s/.*\n  return C;/  static thread_local Context *C = nullptr;\n  if (!C)\n    C = new Context(Context::empty());\n  return *C;/
+}' "$_ctx"
+    log "clangd: root Context without a thread-local destructor"
+  fi
+done
+
+# On older trees a distribution build exports only listed components, so
+# polly's install(EXPORT LLVMExports) names LLVM libraries outside the export
+# set and generate fails. We don't ship libPolly; drop it from the export.
+# Only valid where Polly itself is built by add_polly_library (LLVM <= 10):
+# from LLVM 11 Polly is an add_llvm_pass_plugin that keeps its own export, so
+# stripping the macro's export leaves Polly exported while PollyISL is not and
+# configure fails ("Polly requires target PollyISL that is not in any export set").
+_pm="$SRC/polly/cmake/polly_macros.cmake"
+_pl="$SRC/polly/lib/CMakeLists.txt"
+if [ -f "$_pm" ] && grep -qE '^ *add_polly_library\(Polly[ )]' "$_pl" 2>/dev/null &&
+   grep -q '^ *EXPORT LLVMExports$' "$_pm"; then
+  sed -i '/^ *EXPORT LLVMExports$/d' "$_pm"
+  log "polly: not exporting into LLVMExports"
+fi
+
+# LLVM <= 8 refuses LTO on Windows unless CMAKE_LINKER is lld-link, which only
+# fits MSVC-style links. llvm-mingw's driver handles -flto with ld.lld itself.
+_hlo="$SRC/llvm/cmake/modules/HandleLLVMOptions.cmake"
+if [ "${PLATFORM:-}" = windows ] && grep -q 'LTO requires using lld as the linker' "$_hlo"; then
+  sed -i 's/^if(LLVM_ENABLE_LTO AND LLVM_ON_WIN32 AND NOT LINKER_IS_LLD_LINK)$/if(LLVM_ENABLE_LTO AND MSVC AND NOT LINKER_IS_LLD_LINK)/' "$_hlo"
+  log "windows: allowing LTO without lld-link"
+fi
+
 # bionic: gate llvm-rtdyld's x86_64/ELF/linux fast path on !__ANDROID__ (it
 # doesn't compile for Android).
 if [ "${PLATFORM:-}" = bionic ]; then

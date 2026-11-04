@@ -189,8 +189,16 @@ case "$PLATFORM" in
     CROSS_CC="$TC/bin/${TARGET}${API}-clang"; CROSS_CXX="${CROSS_CC}++"
     CROSS_AR="$TC/bin/llvm-ar"; CROSS_RANLIB="$TC/bin/llvm-ranlib"; CROSS_STRIP="$TC/bin/llvm-strip"
     CROSS_OBJCOPY="$TC/bin/llvm-objcopy"; CROSS_LD="$TC/bin/ld"
+    _gnu="${TARGET/armv7a/arm}"
+    for _v in CROSS_RANLIB:ranlib CROSS_STRIP:strip CROSS_OBJCOPY:objcopy; do
+      _n="${_v%%:*}"; [ -x "${!_n}" ] && continue
+      _t="${_v#*:}"; _f="$(ls "$TC/bin/${_gnu}-$_t" "$NDK_DIR"/toolchains/*/prebuilt/linux-x86_64/bin/"${_gnu}-$_t" 2>/dev/null | head -n1 || true)"
+      [ -n "$_f" ] && printf -v "$_n" %s "$_f"
+    done
     TRIPLE="${TARGET}${API}"
     CROSS_CFLAGS="-static -fno-sanitize=undefined"; CROSS_LDFLAGS="-static -Wl,-z,max-page-size=16384"; LLVM_STATIC=ON
+    # NDK r20/r21 still default to gold, which rejects clang's LTO -O levels.
+    [ -x "$TC/bin/ld.lld" ] && CROSS_LDFLAGS="-fuse-ld=lld $CROSS_LDFLAGS"
     # Pre-4.14 kernels reject MADV_WIPEONFORK with EINVAL, and newer bionic's
     # arc4random aborts on that ("arc4random data MADV_WIPEONFORK failed").
     # Wrap madvise in every executable to emulate it (see the .c).
@@ -203,6 +211,7 @@ case "$PLATFORM" in
     # left it at 8 bytes), so link our own copy in. No-op elsewhere.
     "$CROSS_CC" -c "$PATCHES_DIR/bionic/tls_align.S" -o "$BUILD_DIR/bionic_tls_align.o"
     CROSS_LDFLAGS="$CROSS_LDFLAGS $BUILD_DIR/bionic_tls_align.o"
+    nm "$BUILD_DIR/bionic_tls_align.o" 2>/dev/null | grep -q __bionic_tls_align_anchor && CROSS_LDFLAGS="$CROSS_LDFLAGS -Wl,-u,__bionic_tls_align_anchor"
     ;;
   linux)
     TC="/opt/zig-as-llvm"
@@ -348,6 +357,23 @@ if [ "$PLATFORM" = bionic ]; then
 fi
 
 EXTRA_CMAKE_FLAGS=(${EXTRA_CMAKE_FLAGS:-})
+# r23 removed libgcc, but LLVM 12 still asks the driver for -lgcc by default, so
+# every Android link fails with "unable to find library -lgcc". Google's NDK
+# ships compiler-rt builtins instead; make those the default whenever the NDK
+# has no libgcc.a to find. This is about the Android target sysroot, not the
+# host we build clang on: the linux/macos/windows toolchains are used as NDK
+# compilers too. r24 already defaults to compiler-rt, and r20-r22 still ship
+# libgcc, so only r23 changes behaviour here.
+_ndk_tc="${NDK_DIR:-}/toolchains/llvm/prebuilt/linux-x86_64"
+WANT_COMPILER_RT=0
+# Capture find rather than piping it into grep -q: under pipefail an early-exiting
+# reader can fail the pipeline, which would flip this decision for r20-r22.
+if [ -d "$_ndk_tc" ] && [ -z "$(find "$_ndk_tc" -name libgcc.a -print -quit 2>/dev/null)" ]; then
+  WANT_COMPILER_RT=1
+  EXTRA_CMAKE_FLAGS+=(-DCLANG_DEFAULT_RTLIB=compiler-rt)
+  log "NDK ships no libgcc.a: defaulting the driver to compiler-rt"
+fi
+unset _ndk_tc
 if [ "$SYSTEM_NAME" = Darwin ]; then
   SDKROOT="$(ls -d "$TC/SDK/MacOSX"*.sdk 2>/dev/null | head -n1 || true)"
   [ -n "$SDKROOT" ] && EXTRA_CMAKE_FLAGS+=(-DCMAKE_OSX_SYSROOT="$SDKROOT")
@@ -605,6 +631,13 @@ if [ "$LLVM_LTO" != OFF ]; then
       log "LTO: linker will not take -regalloc-enable-advisor=release, leaving it off"
     fi
   fi
+  # Clang 8 (NDK r20) forwards -Os to lld as -plugin-opt=Os, which lld rejects.
+  # A later -O2 on the link line wins and only sets LTO codegen.
+  if [ "$LLVM_LTO" != OFF ] && ! _probe lto-a.cc -flto=thin -Os &&
+     _probe lto-a.cc -flto=thin -Os -O2; then
+    log "LTO: linker rejects -plugin-opt=Os, linking with -O2"
+    CROSS_LDFLAGS="$CROSS_LDFLAGS -O2"
+  fi
   # Unprofiled, they don't rate link-time codegen worth its cost, and only on
   # linux. Probed too: linux is zig's, same allowlist.
   if [ "$LLVM_LTO" != OFF ] && [ -z "${LLVM_PROFDATA_FILE:-}" ] && [ "$PLATFORM" = linux ]; then
@@ -730,6 +763,14 @@ if [ ! -f "$INSTALL_DIR/lib/libzstd.a" ]; then
 fi
 
 # --- LLVM -------------------------------------------------------------------
+# LLVM <= 11 probes zlib with check_include_file(zlib.h) and
+# check_library_exists(z compress2), and honours neither ZLIB_INCLUDE_DIR nor
+# ZLIB_LIBRARY. Without these paths the probe silently turns zlib off, and lld
+# then rejects the compressed sections in Google's libgcc_real.a (r20-r24). The
+# bundled copy is installed by now, so point both probes at it.
+CROSS_CFLAGS="$CROSS_CFLAGS -I$INSTALL_DIR/include -L$INSTALL_DIR/lib"
+CROSS_CXXFLAGS="$CROSS_CXXFLAGS -I$INSTALL_DIR/include -L$INSTALL_DIR/lib"
+
 # Every probe has run by now, so this configure is the only one: what it is
 # handed is what gets built.
 # LLVM 13 and older probe zlib with check_library_exists(z ...) and link -lz, so
@@ -774,6 +815,15 @@ args=(
   -DCLANG_REPOSITORY_STRING="${CLANG_REPOSITORY_STRING:-llvm-custom}"
   -DPACKAGE_BUGREPORT="${PACKAGE_BUGREPORT:-}"
 )
+# FORCE_ON only exists from LLVM 12. Older trees read it as a false string, so
+# they built without zlib and lld rejected compressed debug sections (as in
+# r20-r24's libgcc_real.a). Ask for ON there; the check after configure makes
+# a missing zlib fatal instead of silent.
+if ! grep -qs 'LLVM_ENABLE_ZLIB STREQUAL FORCE_ON' "$SRC/llvm/cmake/config-ix.cmake"; then
+  for _i in "${!args[@]}"; do
+    [ "${args[$_i]}" = -DLLVM_ENABLE_ZLIB=FORCE_ON ] && args[_i]=-DLLVM_ENABLE_ZLIB=ON
+  done
+fi
 # Pin zlib + zstd to our bundled static builds so find_package() doesn't grab an
 # incompatible host .so (which lld drops, leaving zlib/zstd symbols undefined).
 args+=(
@@ -840,6 +890,7 @@ DIST=()
 _want() {
   local _cm="$SRC/$2/CMakeLists.txt" _s
   [ -f "$_cm" ] || return 0
+  case "$1" in scan-*) grep -q add_llvm_install_targets "$_cm" || return 0 ;; esac
   DIST+=("$1"); shift 2
   for _s in "$@"; do
     grep -qw -- "$_s" "$_cm" && DIST+=("$_s")
@@ -847,7 +898,11 @@ _want() {
   return 0
 }
 _want clang                  clang/tools/driver
-_want clang-resource-headers clang/lib/Headers
+if grep -qsw clang-resource-headers "$SRC/clang/lib/Headers/CMakeLists.txt"; then
+  _want clang-resource-headers clang/lib/Headers
+else
+  _want clang-headers clang/lib/Headers
+fi
 _want clang-check            clang/tools/clang-check
 _want clang-format           clang/tools/clang-format
 _want clang-scan-deps        clang/tools/clang-scan-deps
@@ -877,14 +932,61 @@ done
 if [ -d "$SRC/lld" ]; then
   args+=(-DLLD_SYMLINKS_TO_CREATE="lld-link;ld.lld;ld64.lld;wasm-ld;ld")
 fi
-args+=(-DLLVM_DISTRIBUTION_COMPONENTS="$(IFS=';'; printf '%s' "${DIST[*]}")")
-log "Distribution: ${#DIST[@]} components"
+# Older trees install some tools with a plain install() and no install-<x>
+# target, which LLVM_DISTRIBUTION_COMPONENTS rejects. Drop what configure names,
+# reconfigure, and build and copy those binaries ourselves after the install.
+# musl's off_t is always 64-bit and 1.2.4+ no longer declares lseek64, yet the
+# link-only probe still finds the symbol; old raw_ostream.cpp then fails.
+case "$TARGET" in *musl*) args+=(-DHAVE_LSEEK64=OFF) ;; esac
 
 log "Configuring LLVM for $TARGET ($PLATFORM)"
-cmake -S "$SRC/llvm" -B "$BUILD_DIR" -G Ninja "${args[@]}"
+LOOSE=()
+mkdir -p "$BUILD_DIR"
+while :; do
+  _cfg_log="$BUILD_DIR.configure.log"
+  set +e
+  cmake -S "$SRC/llvm" -B "$BUILD_DIR" -G Ninja "${args[@]}" \
+    -DLLVM_DISTRIBUTION_COMPONENTS="$(IFS=';'; printf '%s' "${DIST[*]}")" 2>&1 | tee "$_cfg_log"
+  _rc=${PIPESTATUS[0]}
+  set -e
+  [ "$_rc" -eq 0 ] && break
+  mapfile -t _bad < <(tr '\n' ' ' < "$_cfg_log" | grep -oE "distribution +component +'[^']+'" | grep -oE "'[^']+'" | tr -d "'" | sort -u)
+  [ ${#_bad[@]} -gt 0 ] || exit "$_rc"
+  for _b in "${_bad[@]}"; do
+    log "  $_b has no install target, installing it by hand"
+    LOOSE+=("$_b")
+    for _i in "${!DIST[@]}"; do [ "${DIST[$_i]}" = "$_b" ] && unset 'DIST[_i]'; done
+  done
+  DIST=("${DIST[@]}")
+done
+log "Distribution: ${#DIST[@]} components"
+grep -qsE '^#define LLVM_ENABLE_ZLIB 1' "$BUILD_DIR"/include/llvm/Config/*.h || {
+  echo "LLVM configured without zlib" >&2; exit 1; }
+# Same for the runtime default: the flag has to have survived into the cache, or
+# every Android link on r23 fails with -lgcc again.
+if [ "$WANT_COMPILER_RT" = 1 ]; then
+  grep -qsE '^CLANG_DEFAULT_RTLIB:[A-Z]*=compiler-rt$' "$BUILD_DIR/CMakeCache.txt" || {
+    echo "CLANG_DEFAULT_RTLIB=compiler-rt did not reach the LLVM configure" >&2; exit 1; }
+fi
 
 log "Building + installing"
 cmake --build "$BUILD_DIR" --target install-distribution
+_all_targets="$(ninja -C "$BUILD_DIR" -t targets all 2>/dev/null | cut -d: -f1)"
+_have=()
+for _b in "${LOOSE[@]}"; do
+  grep -qx "$_b" <<<"$_all_targets" && _have+=("$_b") || log "  $_b is not built for this target, skipped"
+done
+LOOSE=("${_have[@]}")
+if [ ${#LOOSE[@]} -gt 0 ]; then
+  cmake --build "$BUILD_DIR" --target "${LOOSE[@]}"
+  for _b in "${LOOSE[@]}"; do
+    for _f in "$BUILD_DIR/bin/$_b" "$BUILD_DIR/bin/$_b.exe"; do
+      [ -f "$_f" ] || continue
+      install -m755 "$_f" "$OUT/bin/"
+      [ -n "${CROSS_STRIP:-}" ] && "$CROSS_STRIP" "$OUT/bin/${_f##*/}" 2>/dev/null || true
+    done
+  done
+fi
 
 # Every ELF tool the NDK ships has to come back out, or assemble_ndk silently
 # keeps Google's copy: it only replaces a file when one of the same name exists
@@ -917,6 +1019,39 @@ if [ -d "$_ndk_bin" ]; then
     echo "install-distribution did not produce:$_missing" >&2; exit 1; }
   log "All of the NDK's tools accounted for"
 fi
+
+# Two defects only show up at link time, long after this script is done: lld
+# without zlib cannot read the compressed sections in Google's libgcc_real.a, and a
+# driver that still asks for a libgcc the NDK no longer ships fails every link.
+# Probe both on the tools just installed, when this host can run them (a foreign
+# architecture or windows toolchain cannot, and is skipped).
+post_install_smoke() {
+  local clang="$OUT/bin/clang" objcopy="$OUT/bin/llvm-objcopy" t out
+  if ! "$clang" --version >/dev/null 2>&1; then
+    log "Built clang cannot run on this host, post-install smoke checks skipped"; return 0
+  fi
+  t="$(mktemp -d)"
+  echo 'int f(int x){return x+1;}' > "$t/z.c"
+  if [ -x "$objcopy" ] && "$clang" -g -c "$t/z.c" -o "$t/z.o" >/dev/null 2>&1; then
+    out="$("$objcopy" --compress-debug-sections=zlib "$t/z.o" "$t/zc.o" 2>&1)" || {
+      echo "installed llvm-objcopy cannot compress debug sections, so LLVM has no zlib: $out" >&2
+      rm -rf "$t"; return 1; }
+    log "zlib smoke check passed"
+  else
+    log "No llvm-objcopy or no object for the default target, zlib smoke check skipped"
+  fi
+  if [ "${WANT_COMPILER_RT:-0}" = 1 ]; then
+    out="$("$clang" --target=aarch64-linux-android30 -static "$t/z.c" -### 2>&1 || true)"
+    if grep -q '"-lgcc"' <<<"$out" || ! grep -q 'libclang_rt.builtins' <<<"$out"; then
+      echo "installed clang still links -lgcc by default although the NDK has no libgcc" >&2
+      rm -rf "$t"; return 1
+    fi
+    log "compiler-rt default smoke check passed"
+  fi
+  rm -rf "$t"
+}
+
+post_install_smoke
 
 # strip installed binaries one at a time (the zig-as-llvm strip wrapper takes
 # only one file arg).
