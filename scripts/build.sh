@@ -212,6 +212,19 @@ case "$PLATFORM" in
     "$CROSS_CC" -c "$PATCHES_DIR/bionic/tls_align.S" -o "$BUILD_DIR/bionic_tls_align.o"
     CROSS_LDFLAGS="$CROSS_LDFLAGS $BUILD_DIR/bionic_tls_align.o"
     nm "$BUILD_DIR/bionic_tls_align.o" 2>/dev/null | grep -q __bionic_tls_align_anchor && CROSS_LDFLAGS="$CROSS_LDFLAGS -Wl,-u,__bionic_tls_align_anchor"
+    # Static bionic runs .init_array from crtbegin's -1 marker up to crtend's 0, and
+    # LTO output can land after crtend_android.o, so LLVM's own constructors (cl::opt,
+    # target registration) never ran and every compile failed with "Unknown command
+    # line argument". lld sorts .init_array.N by N: give crtbegin's array 0 and
+    # crtend's 99999 so they always end up first and last. -B makes clang use them.
+    _crt="$BUILD_DIR/bionic_crt"; mkdir -p "$_crt"
+    _oc="$TC/bin/llvm-objcopy"; [ -x "$_oc" ] || _oc="$CROSS_OBJCOPY"
+    for _o in crtbegin_static.o:0 crtend_android.o:99999; do
+      _src=$("$CROSS_CC" -print-file-name="${_o%%:*}")
+      "$_oc" --rename-section .init_array=".init_array.${_o#*:}" --rename-section .fini_array=".fini_array.${_o#*:}" \
+        "$_src" "$_crt/${_o%%:*}"
+    done
+    CROSS_LDFLAGS="$CROSS_LDFLAGS -B$_crt"
     ;;
   linux)
     TC="/opt/zig-as-llvm"
@@ -219,7 +232,22 @@ case "$PLATFORM" in
     CROSS_STRIP="$TC/bin/strip"; CROSS_OBJCOPY="$TC/bin/objcopy"; CROSS_LD="$TC/bin/ld"
     case "$TARGET" in
       *musl*) CROSS_CFLAGS="-static -fno-sanitize=undefined"; CROSS_LDFLAGS="-static"; LLVM_STATIC=ON
-              [ -d "$PATCHES_DIR/musl/zig" ] && cp -R "$PATCHES_DIR/musl/zig/." "$(dirname "$(command -v zig)")/" || true ;;
+              [ -d "$PATCHES_DIR/musl/zig" ] && cp -R "$PATCHES_DIR/musl/zig/." "$(dirname "$(command -v zig)")/" || true
+              # hexagon: a static executable crashes on thread-locals that use a
+              # dynamic TLS model (lld does no TLS relaxation there), and LLVM 9-14
+              # tools reached one at startup (PrettyStackTrace, signal handling).
+              # Give everything the initial-exec model a static link resolves to,
+              # including zig's PIC libc++abi (the same edit as make-ndk.sh).
+              if [ "$TARGET" = hexagon-linux-musl ]; then
+                CROSS_CFLAGS="$CROSS_CFLAGS -ftls-model=initial-exec"; CROSS_CXXFLAGS="$CROSS_CXXFLAGS -ftls-model=initial-exec"
+                for _f in "$(dirname "$(command -v zig)")"/lib/libcxxabi/src/cxa_exception_storage.cpp \
+                          "$(dirname "$(command -v zig)")"/lib/libcxxabi/src/cxa_thread_atexit.cpp; do
+                  [ -f "$_f" ] && ! grep -q _NDK_TLS_IE "$_f" || continue
+                  sed -i -e 's/^\(\s*\)static thread_local __cxa_eh_globals eh_globals;/\1_NDK_TLS_IE static thread_local __cxa_eh_globals eh_globals;/' \
+                         -e 's/^\(\s*\)__thread \(DtorList\* dtors = nullptr;\|bool dtors_alive = false;\)/\1_NDK_TLS_IE __thread \2/' \
+                         -e '0,/^#include/s//#if defined(__hexagon__)\n#define _NDK_TLS_IE __attribute__((tls_model("initial-exec")))\n#else\n#define _NDK_TLS_IE\n#endif\n#include/' "$_f"
+                done
+              fi ;;
       *)      CROSS_LDFLAGS="-static-libstdc++ -static-libgcc" ;;
     esac
     ;;
@@ -656,6 +684,18 @@ if [ "$LLVM_LTO" != OFF ]; then
   LINK_JOBS="${LLVM_PARALLEL_LINK_JOBS:-1}"
   log "LTO: $LLVM_LTO ($LINK_JOBS parallel link job(s), $(nproc) cpus)"
 fi
+# mips glibc (dynamic) and n32 hosts: when a non-PIC object (LLVM) and a PIC one
+# (zlib) both call a libc function, lld gives the PIC caller a GOT slot that no
+# dynamic relocation fills, so clang called NULL (zlib's malloc under profile
+# instrumentation, n32 startup). Build everything PIC; -mxgot keeps the GOT,
+# grown by that, in one piece instead of lld's multi-GOT.
+case "$TARGET" in
+  mips*-linux-gnu*|mips64*-linux-*abin32)
+    # lld picks the LTO relocation model from the link, not -fPIC: link PIE too.
+    log "mips: -fPIC -mxgot, PIE link"
+    CROSS_CFLAGS="$CROSS_CFLAGS -fPIC -mxgot"; CROSS_CXXFLAGS="$CROSS_CXXFLAGS -fPIC -mxgot"
+    CROSS_LDFLAGS="$CROSS_LDFLAGS -fPIE -pie"; LLVM_PIC=ON ;;   # OFF has CMake append -no-pie
+esac
 
 # --- vendor string ----------------------------------------------------------
 # llvm_android's shape with our identity in it:
