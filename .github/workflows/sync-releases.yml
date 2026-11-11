@@ -55,9 +55,11 @@ jobs:
             fi
             echo "[$n] $name"
             curl -fsSL --retry 5 -o "$name" "https://github.com/$SRC/releases/download/$TAG/$name"
+            # -T streams the file; --data-binary @file reads it into memory, which curl
+            # refuses above 1 GiB ("option --data-binary: out of memory")
             curl -fsS --retry 5 -o /dev/null -X POST \
               -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
-              --data-binary "@$name" \
+              -T "$name" \
               "https://uploads.github.com/repos/$DST/releases/$id/assets?name=$(jq -rn --arg n "$name" '$n|@uri')"
             rm -f "$name"
           done < want
